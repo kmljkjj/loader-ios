@@ -56,6 +56,8 @@
 -        [Logger info:LOG_CATEGORY_DEFAULT format:@"Attempting to execute bundle..."];
 +
 +        // Hard gate: never evaluate the client if the native bridge is absent.
++        // This replaces the opaque "UnboundNative module not found" alert with a clear native log
++        // and a last-chance reinstall.
 +        if (!runtimeHasUnboundNative(runtime))
 +        {
 +            [Logger error:LOG_CATEGORY_DEFAULT
@@ -83,14 +85,39 @@
          BOOL didLoadBundle = [JSI evaluate:bundle tag:@"unbound" runtime:runtime];
          if (didLoadBundle)
          {
-@@ -298,6 +364,7 @@
+@@ -298,6 +364,8 @@
      [Logger info:LOG_CATEGORY_DEFAULT format:@"RCTHost didInitializeRuntime reached."];
      id hostInstance = instance;
      prepareUnboundLoading(hostInstance);
      injectModulesPatch(runtime);
++    // Register native interop as early as possible so any early JS sees UnboundNative.
 +    unbound::registerNativeInterop(runtime);
      %orig;
      if ([hostInstance respondsToSelector:@selector(callFunctionOnBufferedRuntimeExecutor:)])
+     {
+@@ -310,6 +378,7 @@
+ static void unboundLoadJSBundle(id self, SEL selector, NSURL *sourceURL)
+ {
+     prepareUnboundLoading(self);
++    // Runtime may already exist; interop is re-installed in injectUnboundPreBundle / execute path.
+     if (gOriginalLoadJSBundle)
+     {
+         gOriginalLoadJSBundle(self, selector, sourceURL);
+@@ -318,9 +387,12 @@
+ 
+ static void unboundLoadScriptFromSource(id self, SEL selector, id source)
+ {
+-    [self callFunctionOnBufferedRuntimeExecutor:[](jsi::Runtime &runtime) {
+-        injectModulesPatch(runtime);
+-    }];
++    [self callFunctionOnBufferedRuntimeExecutor:[](jsi::Runtime &runtime)
++                                        {
++                                            injectModulesPatch(runtime);
++                                            // Ensure UnboundNative exists before Discord script continues.
++                                            unbound::registerNativeInterop(runtime);
++                                        }];
+ 
+     if (gOriginalLoadScriptFromSource)
      {
 --- a/sources/UnboundNative.xm
 +++ b/sources/UnboundNative.xm
@@ -105,13 +132,16 @@
 -}
 -
 -}
-+        // Install on the JSI global. The JS client reads globalThis.UnboundNative.
-+        // Mirror onto common aliases so the client cannot miss it.
++        // Install on the JSI global. The JS client reads `globalThis.UnboundNative`.
++        // Hermes/RN sometimes expose different global objects; mirror the binding so the
++        // client cannot miss it (root cause of "UnboundNative module not found").
 +        Value interopValue(std::move(interop));
 +        runtime.global().setProperty(runtime, kInteropGlobalName, interopValue);
 +
 +        try
 +        {
++            // Mirror onto common aliases via a tiny bootstrap script.
++            // This covers globalThis / window / self without depending on host polyfills.
 +            const char *mirror =
 +                "(function(g){"
 +                "var n=g.UnboundNative;"
@@ -140,6 +170,7 @@
 +        {
 +            [Logger error:LOG_CATEGORY_DEFAULT
 +                   format:@"UnboundNative mirror threw: %s", e.what()];
++            // Property is still on runtime.global() even if mirror script failed.
 +            [Logger info:LOG_CATEGORY_DEFAULT format:@"Installed UnboundNative on JSI global only"];
 +        }
 +    }
