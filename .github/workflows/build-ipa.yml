@@ -47,10 +47,9 @@ jobs:
           if [ -f patches/unbound-native-fix.patch ]; then
             echo "Applying patches/unbound-native-fix.patch"
             git apply --reject --whitespace=nowarn patches/unbound-native-fix.patch || {
-              echo "Patch partially applied or already present — continuing"
+              echo "Patch partially applied or already present - continuing"
               true
             }
-            # Ensure helpers exist even if patch partially failed
             if ! grep -q runtimeHasUnboundNative sources/Unbound.xm; then
               echo "ERROR: UnboundNative fix not present in sources/Unbound.xm"
               exit 1
@@ -170,14 +169,15 @@ jobs:
           TAG="v${VERSION}-$(date -u +%Y%m%d%H%M)"
           IPA=$(ls *.ipa | head -1)
           DEB=$(ls packages/*.deb | head -1)
-          NOTES="Discord iOS Loader ${VERSION}
-
-Built from commit ${GITHUB_SHA}
-UnboundNative JSI bridge hardened (module-not-found fix).
-
-Sideload the IPA with TrollStore / AltStore / SideStore.
-"
+          {
+            echo "Discord iOS Loader ${VERSION}"
+            echo ""
+            echo "Built from commit ${GITHUB_SHA}"
+            echo "UnboundNative JSI bridge hardened (module-not-found fix)."
+            echo ""
+            echo "Sideload the IPA with TrollStore / AltStore / SideStore."
+          } > release-notes.txt
           gh release create "$TAG" "$IPA" "$DEB" \
             --title "Discord iOS Loader ${VERSION}" \
-            --notes "$NOTES" \
+            --notes-file release-notes.txt \
             --latest
