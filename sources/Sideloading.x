@@ -76,7 +76,8 @@ static void browserLoginClear(void)
     [defaults removeObjectForKey:BrowserLoginDateKey];
 }
 
-static NSString *safariExtensionIdentifier(void)
+/* Only referenced inside the iOS 26.2+ Safari extension state check. */
+__attribute__((unused)) static NSString *safariExtensionIdentifier(void)
 {
     NSString *extensionsPath = [[[NSBundle mainBundle] bundlePath]
         stringByAppendingPathComponent:@"PlugIns"];
@@ -130,7 +131,6 @@ static void browserLoginStart(void)
     }
 
 #if defined(__IPHONE_26_2) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_26_2
-    // SFSafariExtensionManager state API requires the iOS 26.2+ SDK headers.
     if (@available(iOS 26.2, *))
     {
         NSString *identifier = safariExtensionIdentifier();
