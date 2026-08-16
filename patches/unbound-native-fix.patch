@@ -1,6 +1,6 @@
 --- a/sources/Unbound.xm
 +++ b/sources/Unbound.xm
-@@ -109,10 +109,49 @@
+@@ -109,9 +109,47 @@
      }
  }
  
@@ -29,8 +29,8 @@
 +
  static void injectUnboundPreBundle(jsi::Runtime &runtime)
  {
-+    unbound::registerNativeInterop(runtime);
-+
+     unbound::registerNativeInterop(runtime);
+ 
 +    if (!runtimeHasUnboundNative(runtime))
 +    {
 +        [Logger error:LOG_CATEGORY_DEFAULT
@@ -44,10 +44,10 @@
 +               format:@"CRITICAL: UnboundNative still missing. JS client will fail to init."];
 +    }
 +
-     unbound::registerNativeInterop(runtime);
- 
      if ([Settings getBoolean:@"unbound" key:@"loader.devtools" def:NO])
-@@ -265,7 +304,34 @@
+     {
+         NSData *devtools = [Utilities getResource:@"devtools" data:true ext:@"js"];
+@@ -265,7 +303,34 @@
  
          injectModulesPatch(runtime);
          injectUnboundPreBundle(runtime);
@@ -80,7 +80,7 @@
          BOOL didLoadBundle = [JSI evaluate:bundle tag:@"unbound" runtime:runtime];
          if (didLoadBundle)
          {
-@@ -298,6 +364,8 @@
+@@ -298,6 +363,7 @@
      [Logger info:LOG_CATEGORY_DEFAULT format:@"RCTHost didInitializeRuntime reached."];
      id hostInstance = instance;
      prepareUnboundLoading(hostInstance);
@@ -92,7 +92,7 @@
 
 --- a/sources/UnboundNative.xm
 +++ b/sources/UnboundNative.xm
-@@ -808,7 +808,45 @@
+@@ -808,7 +808,42 @@
              interop.setProperty(runtime, "toolbox", std::move(toolbox));
          }
  
@@ -119,8 +119,7 @@
 +            bool present = ok.isBool() ? ok.getBool() : runtime.global().hasProperty(runtime, kInteropGlobalName);
 +            if (!present)
 +            {
-+                [Logger error:LOG_CATEGORY_DEFAULT
-+                       format:@"UnboundNative mirror failed"];
++                [Logger error:LOG_CATEGORY_DEFAULT format:@"UnboundNative mirror failed"];
 +            }
 +            else
 +            {
