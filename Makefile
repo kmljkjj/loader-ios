@@ -6,11 +6,12 @@ ARCHS := arm64 arm64e
 TARGET := iphone:clang:latest:15.0
 COMMIT_HASH := $(shell git rev-parse HEAD)
 COMMIT_SHORT_HASH := $(shell git rev-parse --short HEAD)
-# Strip quotes/backslashes/semicolons/newlines so they cannot break -DCOMMIT_SUBJECT='@"..."'.
-# Semicolons in commit subjects caused: bash: still: command not found
-COMMIT_SUBJECT := $(shell git log -1 --pretty=format:%s | tr -d '"'\''\\;\n\r' | tr -s ' ' | cut -c1-80)
+# Never embed the git commit subject in compiler flags: spaces, parentheses, colons
+# and apostrophes break Theos/shell (syntax error near unexpected token '(').
+COMMIT_SUBJECT := $(COMMIT_SHORT_HASH)
 COMMIT_BRANCH := $(shell git branch --show-current 2>/dev/null || echo detached)
-BUILD_TIMESTAMP := $(shell date "+%Y-%m-%d %H:%M:%S %Z")
+# No spaces in timestamp (spaces also break -Xcc flag splitting).
+BUILD_TIMESTAMP := $(shell date -u "+%Y-%m-%dT%H:%M:%SZ")
 
 include $(THEOS)/makefiles/common.mk
 
@@ -19,9 +20,7 @@ COMMON_FLAGS = -fobjc-arc -DPACKAGE_VERSION='@"$(THEOS_PACKAGE_BASE_VERSION)"' -
 
 $(TWEAK_NAME)_FILES = $(shell find sources -name "*.x*" -o -name "*.m*")
 $(TWEAK_NAME)_CFLAGS = $(COMMON_FLAGS)
-# _CCFLAGS (not _CXXFLAGS) is what Theos applies to C++/Objective-C++ compiles.
 $(TWEAK_NAME)_CCFLAGS = $(COMMON_FLAGS) -std=c++20
-# Resolve JSI/TurboModule symbols from Discord's React dylib at load time.
 $(TWEAK_NAME)_LDFLAGS = -undefined dynamic_lookup
 $(TWEAK_NAME)_FRAMEWORKS = UIKit Foundation AuthenticationServices UniformTypeIdentifiers UserNotifications Security SafariServices AVKit AVFoundation CoreHaptics
 
