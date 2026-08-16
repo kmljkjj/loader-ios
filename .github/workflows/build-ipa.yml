@@ -136,8 +136,17 @@ jobs:
           go build -o patcher
           ./patcher -i ../discord.ipa -o ../patched.ipa
 
+      # macOS runners use PEP 668 externally-managed Python; system pip is blocked.
       - name: Install cyan (pyzule-rw)
-        run: pip3 install --force-reinstall "https://github.com/asdfzxcvbn/pyzule-rw/archive/main.zip" Pillow
+        run: |
+          set -e
+          python3 -m venv .venv-cyan
+          source .venv-cyan/bin/activate
+          pip install --upgrade pip
+          pip install --force-reinstall "https://github.com/asdfzxcvbn/pyzule-rw/archive/main.zip" Pillow
+          echo "$PWD/.venv-cyan/bin" >> "$GITHUB_PATH"
+          which cyan
+          cyan --help | head -5 || true
 
       - name: Inject tweak into IPA
         run: |
