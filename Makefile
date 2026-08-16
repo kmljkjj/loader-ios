@@ -6,8 +6,9 @@ ARCHS := arm64 arm64e
 TARGET := iphone:clang:latest:15.0
 COMMIT_HASH := $(shell git rev-parse HEAD)
 COMMIT_SHORT_HASH := $(shell git rev-parse --short HEAD)
-# Strip quotes/backslashes so they can't break the -DCOMMIT_SUBJECT='@"..."' flag.
-COMMIT_SUBJECT := $(shell git log -1 --pretty=format:%s | tr -d '"'\''\\')
+# Strip quotes/backslashes/semicolons/newlines so they cannot break -DCOMMIT_SUBJECT='@"..."'.
+# Semicolons in commit subjects caused: bash: still: command not found
+COMMIT_SUBJECT := $(shell git log -1 --pretty=format:%s | tr -d '"'\''\\;\n\r' | tr -s ' ' | cut -c1-80)
 COMMIT_BRANCH := $(shell git branch --show-current 2>/dev/null || echo detached)
 BUILD_TIMESTAMP := $(shell date "+%Y-%m-%d %H:%M:%S %Z")
 
