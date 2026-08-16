@@ -1,0 +1,172 @@
+name: Build IPA
+
+# Builds the Theos tweak (.deb) and injects it into a Discord IPA you provide.
+# Result: downloadable IPA artifact (+ optional GitHub Release).
+
+on:
+  workflow_dispatch:
+    inputs:
+      ipa_url:
+        description: "Direct download URL of a decrypted Discord IPA"
+        required: true
+        type: string
+      release:
+        description: "Create a GitHub Release with the IPA + deb"
+        default: true
+        type: boolean
+      is_testflight:
+        description: "Input IPA is Discord TestFlight"
+        default: false
+        type: boolean
+      add_extensions:
+        description: "Include OpenInDiscord & Share extensions (needs submodules)"
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-ipa-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  build-tweak:
+    runs-on: macos-15
+    timeout-minutes: 30
+    outputs:
+      deb_filename: ${{ steps.set-deb-filename.outputs.filename }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Cache Theos heads
+        run: echo upstream_heads=`git ls-remote https://github.com/theos/theos | head -n 1 | cut -f 1`-`git ls-remote https://github.com/theos/sdks | head -n 1 | cut -f 1` >> $GITHUB_ENV
+
+      - name: Cache Theos
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/theos
+          key: ${{ runner.os }}-theos-${{ env.upstream_heads }}
+
+      - name: Prepare Theos
+        uses: Randomblock1/theos-action@v1
+
+      - name: Build package
+        run: gmake package
+
+      - name: Upload deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: rootless-package
+          path: packages/*.deb
+          if-no-files-found: error
+
+      - name: Set deb filename
+        id: set-deb-filename
+        run: |
+          DEB_FILE=$(ls packages/*.deb | head -1)
+          echo "filename=$(basename "$DEB_FILE")" >> $GITHUB_OUTPUT
+
+  build-ipa:
+    runs-on: macos-15
+    timeout-minutes: 45
+    needs: build-tweak
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "16.4"
+
+      - name: Download deb artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: rootless-package
+          path: packages
+
+      - name: Download Discord IPA
+        uses: nick-fields/retry@v3
+        env:
+          IPA_URL: ${{ inputs.ipa_url }}
+        with:
+          timeout_minutes: 15
+          max_attempts: 3
+          retry_wait_seconds: 20
+          command: curl -L --fail -o discord.ipa "$IPA_URL"
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+          cache: false
+
+      - name: Clone patcher-ios
+        uses: actions/checkout@v4
+        with:
+          repository: unbound-app/patcher-ios
+          path: patcher-ios
+
+      - name: Patch IPA icons / metadata
+        run: |
+          cd patcher-ios
+          go build -o patcher
+          ./patcher -i ../discord.ipa -o ../patched.ipa
+
+      - name: Install cyan (pyzule-rw)
+        run: pip3 install --force-reinstall "https://github.com/asdfzxcvbn/pyzule-rw/archive/main.zip" Pillow
+
+      - name: Inject tweak into IPA
+        run: |
+          set -e
+          NAME=$(grep '^Name:' control | cut -d' ' -f2- | tr ' ' '-')
+          echo "APP_NAME=$NAME" >> $GITHUB_ENV
+          DEB=$(ls packages/*.deb | head -1)
+          cp "$DEB" .
+
+          if [ "${{ inputs.is_testflight }}" = "true" ]; then
+            cyan -duwsgq -b "com.hammerandchisel.discord.testflight" -i discord.ipa -o "${NAME}.ipa" -f "$(basename "$DEB")"
+          else
+            cyan -duwsgq -i patched.ipa -o "${NAME}.ipa" -f "$(basename "$DEB")"
+          fi
+
+          ls -lh "${NAME}.ipa"
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: discord-ios-loader-ipa
+          path: "*.ipa"
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        if: ${{ inputs.release == true }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          VERSION=$(grep '^Version:' control | awk '{print $2}')
+          TAG="v${VERSION}-$(date -u +%Y%m%d%H%M)"
+          IPA=$(ls *.ipa | head -1)
+          DEB=$(ls packages/*.deb | head -1)
+          NOTES="Discord iOS Loader ${VERSION}
+
+Built from commit ${GITHUB_SHA}
+UnboundNative JSI bridge hardened (module-not-found fix).
+
+Sideload the IPA with TrollStore / AltStore / SideStore.
+Requires ElleKit-compatible injection (cyan includes the tweak runtime).
+"
+          gh release create "$TAG" "$IPA" "$DEB" \
+            --title "Discord iOS Loader ${VERSION}" \
+            --notes "$NOTES" \
+            --latest
