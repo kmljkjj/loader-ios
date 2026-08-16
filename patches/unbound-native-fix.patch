@@ -1,0 +1,137 @@
+--- a/sources/Unbound.xm
++++ b/sources/Unbound.xm
+@@ -109,10 +109,49 @@
+     }
+ }
+ 
++static bool runtimeHasUnboundNative(jsi::Runtime &runtime)
++{
++    try
++    {
++        if (runtime.global().hasProperty(runtime, "UnboundNative"))
++        {
++            return true;
++        }
++        const char *check =
++            "!!(typeof globalThis!=='undefined'&&globalThis.UnboundNative)"
++            "||!!(typeof global!=='undefined'&&global.UnboundNative)"
++            "||!!(typeof window!=='undefined'&&window.UnboundNative);";
++        jsi::Value result = [JSI evaluateSource:[NSString stringWithUTF8String:check]
++                                            tag:@"unbound:native-check"
++                                        runtime:runtime];
++        return [JSI toBool:result runtime:runtime fallback:NO];
++    }
++    catch (...)
++    {
++        return false;
++    }
++}
++
+ static void injectUnboundPreBundle(jsi::Runtime &runtime)
+ {
++    unbound::registerNativeInterop(runtime);
++
++    if (!runtimeHasUnboundNative(runtime))
++    {
++        [Logger error:LOG_CATEGORY_DEFAULT
++               format:@"UnboundNative missing after registerNativeInterop — retrying once"];
++        unbound::registerNativeInterop(runtime);
++    }
++
++    if (!runtimeHasUnboundNative(runtime))
++    {
++        [Logger error:LOG_CATEGORY_DEFAULT
++               format:@"CRITICAL: UnboundNative still missing. JS client will fail to init."];
++    }
++
+     unbound::registerNativeInterop(runtime);
+ 
+     if ([Settings getBoolean:@"unbound" key:@"loader.devtools" def:NO])
+@@ -265,7 +304,34 @@
+ 
+         injectModulesPatch(runtime);
+         injectUnboundPreBundle(runtime);
+-        [Logger info:LOG_CATEGORY_DEFAULT format:@"Attempting to execute bundle..."];
++
++        if (!runtimeHasUnboundNative(runtime))
++        {
++            [Logger error:LOG_CATEGORY_DEFAULT
++                   format:@"UnboundNative absent before bundle eval — forcing reinstall"];
++            unbound::registerNativeInterop(runtime);
++        }
++
++        if (!runtimeHasUnboundNative(runtime))
++        {
++            [Logger error:LOG_CATEGORY_DEFAULT
++                   format:@"Aborting Unbound bundle: UnboundNative module not found on JSI runtime"];
++            dispatch_async(dispatch_get_main_queue(), ^{
++                [Utilities alert:@"UnboundNative could not be installed on the JS runtime.\n\n"
++                                  @"Common causes:\n"
++                                  @"• Tweak not loaded via ElleKit\n"
++                                  @"• IPA not patched correctly\n"
++                                  @"• Discord New Architecture runtime mismatch\n\n"
++                                  @"Check device logs for Unbound / JSI errors."
++                            title:@"UnboundNative missing"];
++            });
++            return;
++        }
++
++        [Logger info:LOG_CATEGORY_DEFAULT format:@"Attempting to execute bundle (UnboundNative OK)..."];
+         BOOL didLoadBundle = [JSI evaluate:bundle tag:@"unbound" runtime:runtime];
+         if (didLoadBundle)
+         {
+@@ -298,6 +364,8 @@
+     [Logger info:LOG_CATEGORY_DEFAULT format:@"RCTHost didInitializeRuntime reached."];
+     id hostInstance = instance;
+     prepareUnboundLoading(hostInstance);
+     injectModulesPatch(runtime);
++    unbound::registerNativeInterop(runtime);
+     %orig;
+     if ([hostInstance respondsToSelector:@selector(callFunctionOnBufferedRuntimeExecutor:)])
+     {
+
+--- a/sources/UnboundNative.xm
++++ b/sources/UnboundNative.xm
+@@ -808,7 +808,45 @@
+             interop.setProperty(runtime, "toolbox", std::move(toolbox));
+         }
+ 
+-        runtime.global().setProperty(runtime, kInteropGlobalName, std::move(interop));
+-
+-        [Logger info:LOG_CATEGORY_DEFAULT format:@"Installed window.UnboundNative"];
++        Value interopValue(std::move(interop));
++        runtime.global().setProperty(runtime, kInteropGlobalName, interopValue);
++
++        try
++        {
++            const char *mirror =
++                "(function(g){"
++                "var n=g.UnboundNative;"
++                "if(!n)return false;"
++                "try{if(typeof globalThis!=='undefined')globalThis.UnboundNative=n;}catch(e){}"
++                "try{if(typeof window!=='undefined')window.UnboundNative=n;}catch(e){}"
++                "try{if(typeof self!=='undefined')self.UnboundNative=n;}catch(e){}"
++                "try{g.UnboundNative=n;}catch(e){}"
++                "return !!(typeof globalThis!=='undefined'?globalThis.UnboundNative:g.UnboundNative);"
++                "})(globalThis);";
++            auto buffer = std::make_shared<StringBuffer>(mirror);
++            Value ok = runtime.evaluateJavaScript(buffer, "unbound:native-mirror");
++            bool present = ok.isBool() ? ok.getBool() : runtime.global().hasProperty(runtime, kInteropGlobalName);
++            if (!present)
++            {
++                [Logger error:LOG_CATEGORY_DEFAULT
++                       format:@"UnboundNative mirror failed"];
++            }
++            else
++            {
++                [Logger info:LOG_CATEGORY_DEFAULT
++                      format:@"Installed UnboundNative on global / globalThis / window"];
++            }
++        }
++        catch (const std::exception &e)
++        {
++            [Logger error:LOG_CATEGORY_DEFAULT
++                   format:@"UnboundNative mirror threw: %s", e.what()];
++        }
+     }
+ }
