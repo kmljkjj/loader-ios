@@ -129,6 +129,8 @@ static void browserLoginStart(void)
         return;
     }
 
+#if defined(__IPHONE_26_2) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_26_2
+    // SFSafariExtensionManager state API requires the iOS 26.2+ SDK headers.
     if (@available(iOS 26.2, *))
     {
         NSString *identifier = safariExtensionIdentifier();
@@ -171,6 +173,7 @@ static void browserLoginStart(void)
                              }];
         return;
     }
+#endif
 
     browserLoginStartFlow();
 }
